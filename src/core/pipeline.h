@@ -8,8 +8,8 @@
 //
 // Overflow policy is DROP OLDEST. For telemetry the freshest reading is the
 // useful one, so a slow consumer should cost you history rather than current
-// state - and a producer must never block, because in project 3 the producer
-// is a CAN driver that cannot afford to wait on a display.
+// state - and a producer must never block, because a source may be driven by
+// hardware that cannot afford to wait on a display.
 //
 // The alternative policies are worth knowing you rejected: blocking the
 // producer stalls a real-time source, and dropping the newest means a stalled

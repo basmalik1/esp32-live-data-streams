@@ -60,10 +60,10 @@ bool networkConnect() {
   Serial.println(WiFi.localIP());
   Serial.printf("wifi: rssi %d dBm\n", WiFi.RSSI());
 
-  // Modem sleep parks the radio between beacons, which costs 80-300 ms on
-  // every request. This project polls rather than serves, so the trade is less
-  // one-sided than it was last time - but a source task blocked on the radio
-  // waking up is a source task holding a queue slot.
+  // Modem sleep parks the radio between beacons, which adds 80-300 ms to every
+  // request. Disabling it costs roughly 20-30 mA, worth it here because a source
+  // task blocked waiting for the radio to wake is a source task holding its
+  // schedule slot. Revisit if this ever runs on a battery.
   WiFi.setSleep(false);
 
   connected = true;

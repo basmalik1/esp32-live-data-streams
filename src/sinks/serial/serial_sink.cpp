@@ -48,8 +48,8 @@ void task(void *) {
     }
 
     // Nothing arrived within the timeout. Worth saying so rather than sitting
-    // silent, because "no output" otherwise looks identical to a crash - which
-    // cost real time to diagnose in the previous project.
+    // silent: "no output" is indistinguishable from a crash, and a heartbeat
+    // that also carries queue depth and stack headroom costs one line.
     Serial.printf("[%7lu] idle     queued=%lu dropped=%lu stack_free=%u\n",
                   millis(), pipelineQueued(), pipelineDropped(),
                   uxTaskGetStackHighWaterMark(nullptr));

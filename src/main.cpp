@@ -32,9 +32,9 @@ void setup() {
     return;
   }
 
-  // A failed join is not fatal. The source will post failure readings and
-  // retry, which is exactly the behaviour project 3 needs when a sensor is
-  // disconnected - the system reports degraded rather than stopping.
+  // A failed join is not fatal. The source posts failure readings and retries,
+  // so the system reports degraded rather than stopping - which is what any
+  // consumer downstream needs in order to hedge rather than guess.
   networkConnect();
 
   if (!weatherSourceStart()) {
