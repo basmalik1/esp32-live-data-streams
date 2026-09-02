@@ -1,0 +1,77 @@
+#include "net/network_manager.h"
+
+#include <Arduino.h>
+#include <WiFi.h>
+
+#include "secrets.h" // WIFI_SSID, WIFI_PASSWORD - gitignored, see README
+
+namespace {
+
+constexpr uint32_t CONNECT_TIMEOUT_MS = 30000;
+constexpr char HOSTNAME[] = "esp32-live-data-streams";
+
+bool connected = false;
+
+void logVisibleNetworks() {
+  Serial.println("wifi: scanning...");
+  WiFi.disconnect();
+  delay(100);
+
+  int found = WiFi.scanNetworks();
+  if (found <= 0) {
+    Serial.println("wifi: no networks visible at all");
+    return;
+  }
+
+  Serial.printf("wifi: %d networks visible\n", found);
+  for (int i = 0; i < found; i++) {
+    Serial.printf("  %-32s ch%-3d %4d dBm\n", WiFi.SSID(i).c_str(),
+                  WiFi.channel(i), WiFi.RSSI(i));
+  }
+  WiFi.scanDelete();
+}
+
+} // namespace
+
+bool networkConnect() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(HOSTNAME); // must precede begin()
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.printf("wifi: connecting to %s", WIFI_SSID);
+
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - start < CONNECT_TIMEOUT_MS) {
+    delay(250);
+    Serial.print('.');
+  }
+  Serial.println();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("wifi: failed after %lu ms, status %d\n", millis() - start,
+                  WiFi.status());
+    logVisibleNetworks();
+    connected = false;
+    return false;
+  }
+
+  Serial.print("wifi: connected, IP ");
+  Serial.println(WiFi.localIP());
+  Serial.printf("wifi: rssi %d dBm\n", WiFi.RSSI());
+
+  // Modem sleep parks the radio between beacons, which costs 80-300 ms on
+  // every request. This project polls rather than serves, so the trade is less
+  // one-sided than it was last time - but a source task blocked on the radio
+  // waking up is a source task holding a queue slot.
+  WiFi.setSleep(false);
+
+  connected = true;
+  return true;
+}
+
+bool networkIsUp() { return connected && WiFi.status() == WL_CONNECTED; }
+
+IPAddress networkIp() { return WiFi.localIP(); }
+
+int networkRssi() { return WiFi.RSSI(); }
