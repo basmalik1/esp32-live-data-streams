@@ -4,7 +4,7 @@ Every design choice made so far, with the reasoning and what was rejected. The c
 
 Each entry ends with a **revisit** note — the condition under which the decision should be reconsidered. A decision without one is a decision nobody will ever re-examine.
 
-Status as of v3.0 + hardware pass: two sources on different cadences, one queue, a fusion task holding a snapshot, a verdict computed from it, a sink that prints both. Forty-six host tests and six on-target tests passing. The firmware has run live; the extended soak has not yet run to completion.
+Status as of v3.0 + hardware pass: two sources on different cadences, one queue, a fusion task holding a snapshot, a verdict computed from it, a sink that prints both. Forty-six host tests and six on-target tests passing; a 30-minute soak on the board with zero drops and each source within 0.4 s of its ideal schedule.
 
 ---
 
@@ -212,7 +212,7 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 **Rejected.** A software timer posting to the queue on a fixed tick, with the fetch happening in the timer callback — timer callbacks must not block, and an HTTP request blocks.
 
-**Revisit.** If a source's fetch ever takes longer than its period. Then the cadence is unachievable and the period, not the mechanism, is wrong.
+**Revisit.** If a source's fetch ever takes longer than its period. Then the cadence is unachievable and the period, not the mechanism, is wrong. Confirmed on hardware: after thirty minutes each source is within 0.4 s of its ideal schedule (TC-1.3).
 
 ### 4.2 Application tasks pinned to core 1
 
@@ -242,7 +242,7 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 **Rejected.** Generous stacks everywhere. RAM is 320 KB, TLS alone wants a large chunk, and "generous" for a task that does HTTPS is a number nobody can guess.
 
-**Revisit.** Now measured, on two short runs — see the table in the process document. Each task keeps roughly half its stack at the low point. Two handshakes per source is thin evidence; the sizes stay until several days of marks agree. Note for anyone reading the numbers: ESP-IDF reports the high-water mark in bytes, not the words of vanilla FreeRTOS. The documentation said words until the first run prompted a check of the header.
+**Revisit.** Now measured, on three runs and nine TLS handshakes — see the table in the process document. Each task keeps roughly half its stack at the low point. The sizes stay until several days of marks agree. Note for anyone reading the numbers: ESP-IDF reports the high-water mark in bytes, not the words of vanilla FreeRTOS. The documentation said words until the first run prompted a check of the header.
 
 ### 4.5 `loop()` suspends itself
 
@@ -439,6 +439,6 @@ The clock comparison is the part that was not obvious. `xTaskDelayUntil` reports
 Decisions not yet made, listed so they are made deliberately rather than by default.
 
 - **Queue depth at v4.0.** Sixteen is generous for polled sources and will be nothing against a push stream. Whether the stream shares the queue or gets its own is undecided.
-- **Stack sizes.** Measured on two short runs (see the process document). Whether that is a safe basis for shrinking anything is open; the answer is more and longer runs.
+- **Stack sizes.** Measured on three runs (see the process document). Whether that is a safe basis for shrinking anything is open; the answer is more days of marks.
 - **What the log records.** The verdict is a pure function of the snapshot, so recording snapshots is enough to replay verdicts. Whether to also record every reading — the stream, not just the state — decides the log's size and whether it can answer "what did the air source say at 14:32", and is v4.0's first decision.
 - **The dashboard.** Deferred again, to after the log (1.5). The honest version shows the verdict and its inputs over time, which a device with no history cannot draw.

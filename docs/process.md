@@ -47,7 +47,7 @@ REQ-3 and REQ-5 are the two that shape everything else. A system that cannot tel
 | --- | --- | --- | --- |
 | TC-1.1 | Unit | Each response parser accepts a real payload and rejects malformed, truncated, mistyped and incomplete ones | **Automated** — host |
 | TC-1.2 | Integration | A reading posted by a source task is received by the consumer | **Passed** — live run |
-| TC-1.3 | System | A source holds its cadence across an extended run without drift | Not run — a soak was started and cut short at 5½ min, before any source polled twice |
+| TC-1.3 | System | A source holds its cadence across an extended run without drift | **Passed** — 30-minute soak, offset under 0.4 s |
 | TC-2.1 | Unit | Age arithmetic stays correct across the `millis()` rollover | **Automated** — host |
 | TC-2.2 | Integration | The age reported by the consumer matches the elapsed time since acquisition | **Passed** — live run |
 | TC-2.3 | Unit | The snapshot ages each source against its own threshold, independently of the others | **Automated** — host |
@@ -63,7 +63,7 @@ REQ-3 and REQ-5 are the two that shape everything else. A system that cannot tel
 | TC-6.2 | Integration | The log survives power loss mid-write | Not started |
 | TC-6.3 | System | Replaying a recorded log reproduces the original verdicts exactly | Not started |
 
-**Eleven of seventeen are automated** — five on the host, six on the board — **and two more passed as observed live runs.** One of fifteen at v1.0, four at v2.0, five at v3.0. Of the four that remain, three need the log and one needs the board left alone for half an hour. The on-target tier found one bug before it reached a commit: see TC-5.3.
+**Eleven of seventeen are automated** — five on the host, six on the board — **and three more passed as observed live runs.** One of fifteen at v1.0, four at v2.0, five at v3.0. The three that remain need the log. The on-target tier found one bug before it reached a commit: see TC-5.3.
 
 ## Results
 
@@ -196,27 +196,34 @@ TC-5.3 is the system case, and everything in it is real: join the network, start
 
 **This test found a bug.** The first version of the poll-now hook left the task's scheduled wake time in the future after an aborted delay, and FreeRTOS's `vTaskDelayUntil` treats a future wake time as "no delay needed" — so every forced poll fetched twice, 1 ms apart. The fix compares the clock to the wake time after every wait; the test now asserts exactly one failure per source. A host test could not have caught this: it is a property of the real scheduler.
 
-### TC-1.3 — attempted, not closed
+### TC-1.3 result — 30-minute soak
 
-A 35-minute soak was started with the main firmware and the UART port captured. It was cut short at 330 s by the capturing process, not the board: one banner, `dropped=0` throughout, one arrival per source, and no second arrival for either — so there is no interval to measure and nothing to say about drift. It needs a rerun with the board left alone for at least three weather periods.
+The main firmware, left alone with the UART port captured for 36 minutes. One boot banner, `dropped=0` on every heartbeat, no failures. Arrival timestamps in ms:
 
-### Stack high-water marks — two short runs
-
-Minimum free stack in bytes, reported by each task at its own low point (sources after the TLS fetch, fusion and sink on every tick):
-
-| Task | Allocated | Min free, run 1 | Min free, run 2 | Used at worst |
+| Source | Period | Arrivals | Intervals | Offset from ideal after the run |
 | --- | --- | --- | --- | --- |
-| weather | 8192 | 4016 | 3952 | 4240 |
-| air | 8192 | 4100 | 4048 | 4144 |
-| fusion | 4096 | 2052 | 2052 | 2044 |
-| serial sink | 4096 | 1964 | 1964 | 2132 |
+| weather | 600 s | 2957 · 601924 · 1201909 · 1802615 | 598.97 · 599.99 · 600.71 s | **−342 ms** after 3 periods |
+| air | 900 s | 3034 · 901900 · 1802640 | 898.87 · 900.74 s | **−394 ms** after 2 periods |
 
-Two fetches per source is two TLS handshakes. Every task keeps roughly half its stack at the low point. That is comfortable, and it is not enough evidence to shrink anything — a longer run, a slower handshake or a larger response could all need more — so the sizes stay until several days of marks agree.
+The individual intervals wobble by about a second because the timestamp is taken *after* the fetch and a TLS handshake takes a variable time. What the case is about is whether that wobble accumulates, and it does not: after half an hour each source is within 0.4 s of where a perfect clock would put it. With `vTaskDelay` the period would have been 600 s *plus* the fetch, and the offset would already be several seconds and growing. This is the property `vTaskDelayUntil` was chosen for, and it holds on real silicon.
+
+(A first attempt at this soak was cut short at 330 s by the capturing process, before any source had polled twice. It is mentioned because the process document should not read as though everything worked the first time.)
+
+### Stack high-water marks — three runs
+
+Minimum free stack in bytes, reported by each task at its own low point (sources after the TLS fetch, fusion and sink on every tick). Run 3 is the soak: four weather fetches, three air.
+
+| Task | Allocated | Run 1 | Run 2 | Run 3 (soak) | Min free | Used at worst |
+| --- | --- | --- | --- | --- | --- | --- |
+| weather | 8192 | 4016 | 3952 | 3968 | 3952 | 4240 |
+| air | 8192 | 4100 | 4048 | 3888 | 3888 | 4304 |
+| fusion | 4096 | 2052 | 2052 | 2052 | 2052 | 2044 |
+| serial sink | 4096 | 1964 | 1964 | 1964 | 1964 | 2132 |
+
+Nine TLS handshakes across the two sources, and the worst of them used 4.3 KB of 8. Fusion and the sink are dead steady — their work is the same every tick. Every task keeps roughly half its stack, which is comfortable and still not enough evidence to shrink anything: air's minimum moved down by 160 bytes between runs 2 and 3, which is the kind of variation a longer run could extend. The sizes stay until several days of marks agree.
 
 ## Known gaps
 
 **No certificate validation.** The HTTPS client calls `setInsecure()`, so the connection is encrypted but the server is not authenticated. Pinning a root CA means shipping a certificate that expires. For public read-only weather data the exposure is low, but it is a real weakness rather than an oversight.
 
-**Stack sizes are measured, barely.** Two short runs, two TLS handshakes per source — see the table above. Every task keeps roughly half its stack at the low point, which is comfortable but not proof that a longer run, a slower handshake or a larger response would not need more. The sizes stay where they are until several days of high-water marks say otherwise.
-
-**TC-1.3 has not run to completion.** The cadence has been observed for one poll per source, which proves nothing about drift.
+**Stack sizes are measured, not yet sized.** Three runs, nine TLS handshakes — see the table above. Every task keeps roughly half its stack at the low point, which is comfortable but not proof that a longer run, a slower handshake or a larger response would not need more. The sizes stay where they are until several days of high-water marks say otherwise.

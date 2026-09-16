@@ -51,7 +51,7 @@ Budget roughly 30 seconds per test file: each is a full build, flash and run cyc
 
 ## Soak — `read_serial` for half an hour
 
-TC-1.3 is not a Unity test. It is the main firmware left running while a script reads the UART port for at least three weather periods, and then the arrival timestamps checked against 600 s and 900 s. The first attempt was cut short before any source polled twice; the process document says so.
+TC-1.3 is not a Unity test. It is the main firmware left running while a script reads the UART port for at least three weather periods, and then the arrival timestamps checked against 600 s and 900 s. The result — under 0.4 s of accumulated offset after half an hour — is in the process document.
 
 ## Reading the running system
 
