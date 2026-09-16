@@ -1,7 +1,8 @@
 #pragma once
 
-// Starts the consumer task: drains the pipeline and prints what arrives.
+// Prints the fused snapshot to serial on a fixed cadence.
 //
-// Milestone 1's sink. It exists to prove the shape end to end - source task,
-// queue, consumer - before a fusion stage or a display is worth writing.
+// It reads the snapshot, not the queue. The queue has exactly one consumer -
+// the fusion task - and every output surface takes a copy of what fusion
+// knows. That is the same shape the verdict engine and the log will use.
 bool serialSinkStart();

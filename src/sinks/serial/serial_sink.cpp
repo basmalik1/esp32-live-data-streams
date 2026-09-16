@@ -5,54 +5,65 @@
 #include <freertos/task.h>
 
 #include "core/pipeline.h"
+#include "core/snapshot.h"
+#include "fusion/fusion.h"
 
 namespace {
 
 constexpr uint32_t STACK_BYTES = 4096;
-constexpr UBaseType_t PRIORITY = 2; // below the sources: producers come first
+constexpr UBaseType_t PRIORITY = 1; // below fusion, which is below the sources
 constexpr BaseType_t CORE = 1;
-constexpr uint32_t TAKE_TIMEOUT_MS = 5000;
+constexpr uint32_t PERIOD_MS = 10000;
 
 TaskHandle_t handle = nullptr;
 
-void print(const Reading &r) {
-  uint32_t ageMs = millis() - r.timestampMs;
+void printSource(const Snapshot &snap, SourceId id, uint32_t nowMs) {
+  const SourceState &st = snap.source[(size_t)id];
+  SourceStatus status = snapshotStatus(snap, id, nowMs);
 
-  if (!r.valid) {
-    Serial.printf("[%7lu] %-8s FAILED\n", r.timestampMs, sourceName(r.source));
+  Serial.printf("  %-8s %-8s", sourceName(id), statusName(status));
+
+  if (!st.everSucceeded) {
+    Serial.printf("  (%u failed)\n", st.consecutiveFailures);
     return;
   }
 
-  switch (r.source) {
+  uint32_t ageS = readingAgeMs(nowMs, st.lastGood.timestampMs) / 1000;
+  switch (id) {
   case SourceId::Weather:
-    Serial.printf("[%7lu] %-8s %.1f C  %.0f%% RH  %.1f km/h   (age %lu ms)\n",
-                  r.timestampMs, sourceName(r.source), r.weather.tempC,
-                  r.weather.humidityPct, r.weather.windKph, ageMs);
+    Serial.printf("  %.1f C  %.0f%% RH  %.1f km/h", st.lastGood.weather.tempC,
+                  st.lastGood.weather.humidityPct, st.lastGood.weather.windKph);
     break;
   case SourceId::AirQuality:
-    Serial.printf("[%7lu] %-8s pm2.5 %.1f  aqi %d   (age %lu ms)\n",
-                  r.timestampMs, sourceName(r.source), r.air.pm25, r.air.aqi,
-                  ageMs);
+    Serial.printf("  pm2.5 %.1f  pm10 %.1f  aqi %d", st.lastGood.air.pm25,
+                  st.lastGood.air.pm10, st.lastGood.air.aqi);
     break;
   default:
     break;
   }
+  Serial.printf("  age %lus", ageS);
+  if (st.consecutiveFailures > 0) {
+    Serial.printf("  (%u failed since)", st.consecutiveFailures);
+  }
+  Serial.println();
 }
 
 void task(void *) {
-  for (;;) {
-    Reading r{};
-    if (pipelineTake(r, TAKE_TIMEOUT_MS)) {
-      print(r);
-      continue;
-    }
+  TickType_t wake = xTaskGetTickCount();
 
-    // Nothing arrived within the timeout. Worth saying so rather than sitting
-    // silent: "no output" is indistinguishable from a crash, and a heartbeat
-    // that also carries queue depth and stack headroom costs one line.
-    Serial.printf("[%7lu] idle     queued=%lu dropped=%lu stack_free=%u\n",
-                  millis(), pipelineQueued(), pipelineDropped(),
+  for (;;) {
+    vTaskDelayUntil(&wake, pdMS_TO_TICKS(PERIOD_MS));
+
+    Snapshot snap;
+    fusionSnapshot(snap);
+    uint32_t now = millis();
+
+    Serial.printf("[%7lu] snapshot queued=%lu dropped=%lu stack_free=%u\n", now,
+                  pipelineQueued(), pipelineDropped(),
                   uxTaskGetStackHighWaterMark(nullptr));
+    for (size_t i = 0; i < (size_t)SourceId::Count; i++) {
+      printSource(snap, (SourceId)i, now);
+    }
   }
 }
 
