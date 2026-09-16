@@ -5,10 +5,10 @@ Two tiers, split by what each can actually prove.
 ```
    /\      on-target   scheduler, queue under load, real peripherals
   /  \
- /____\    host        pure logic — parsers, the snapshot, and later the verdict
+ /____\    host        pure logic — parsers, the snapshot, the verdict
 ```
 
-A third tier — system tests against a running board — arrives with the verdict engine, since there is not yet a system-level behaviour worth asserting.
+A third tier — system tests against a running board — now has something to assert: TC-5.3 pulls the network mid-run and expects the verdict to go *Unknown* rather than stay confident. It needs the board.
 
 ## Host — `pio test -e native`
 
@@ -23,10 +23,11 @@ pio test -e native
 | `test_native_weather_parse` | TC-1.1 — the forecast parser, 8 cases |
 | `test_native_air_parse` | TC-1.1 — the air-quality parser, 9 cases |
 | `test_native_snapshot` | TC-2.1, TC-2.3, TC-3.3 — age arithmetic and the staleness rules, 14 cases |
+| `test_native_verdict` | TC-5.1 — banding, worst-factor-wins, and every status combination, 15 cases |
 
-This tier is why the parsers and the snapshot are free functions in their own translation units with no Arduino headers. The `native` environment compiles only `sources/*/*_parse.cpp` and `core/snapshot.cpp`, so anything that includes `Arduino.h` is excluded by construction and the tier stays buildable on a machine with no embedded toolchain at all.
+This tier is why the parsers, the snapshot and the verdict are free functions in their own translation units with no Arduino headers. The `native` environment compiles only `sources/*/*_parse.cpp`, `core/snapshot.cpp` and `core/verdict.cpp`, so anything that includes `Arduino.h` is excluded by construction and the tier stays buildable on a machine with no embedded toolchain at all.
 
-The payoff is being able to test what you cannot conveniently produce. For the parsers: a body truncated by a dropped connection, a field the service omitted, a number arriving as a string. For the snapshot: a source that is forty-five minutes old, a timestamp on the far side of the 49-day `millis()` wrap, a failure landing on top of a good value. Reproducing any of those against a live board means waiting for a bad day, or a long one.
+The payoff is being able to test what you cannot conveniently produce. For the parsers: a body truncated by a dropped connection, a field the service omitted, a number arriving as a string. For the snapshot: a source that is forty-five minutes old, a timestamp on the far side of the 49-day `millis()` wrap, a failure landing on top of a good value. For the verdict: all sixteen combinations of source status, and a day that is mild, calm and has an AQI of 150. Reproducing any of those against a live board means waiting for a bad day, or a long one.
 
 ## On-target — `pio test -e target`
 
@@ -56,10 +57,11 @@ Three kinds of line. The fusion task prints one per arrival, which is the observ
 [  40511] air      FAILED
 ```
 
-The sink prints the snapshot every 10 seconds — per source, its status, last good value and age:
+The sink prints the verdict and the snapshot every 10 seconds — the answer, then per source its status, last good value and age:
 
 ```
 [  50000] snapshot queued=0 dropped=0 stack_free=2840
+  verdict  GOOD      confidence low   air failing
   weather  ok        21.3 C  64% RH  11.2 km/h  age 39s
   air      FAILING   pm2.5 3.4  pm10 6.3  aqi 26  age 39s  (1 failed since)
 ```

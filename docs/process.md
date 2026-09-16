@@ -25,7 +25,7 @@ That is what an RTOS is for, and it is why the architecture here is a set of ind
 | REQ-2 | Every reading shall carry the time it was obtained, and consumers shall be able to determine its age | Met |
 | REQ-3 | A source failure shall be reported as a failure, distinguishable from a source that has simply not updated yet | Met |
 | REQ-4 | No source shall block on a slow or stalled consumer | Met |
-| REQ-5 | The system shall produce a single verdict from available readings, and shall degrade that verdict when inputs are stale or absent | Not started — v3.0 |
+| REQ-5 | The system shall produce a single verdict from available readings, and shall degrade that verdict when inputs are stale or absent | Met — on-target cases pending |
 | REQ-6 | Readings and verdicts shall be logged to non-volatile storage and be replayable offline | Not started — v4.0 |
 
 REQ-3 and REQ-5 are the two that shape everything else. A system that cannot tell a broken sensor from a quiet one will eventually state a confident answer built on a value that stopped updating hours ago, and that failure is silent by construction — which is the worst kind.
@@ -38,7 +38,7 @@ REQ-3 and REQ-5 are the two that shape everything else. A system that cannot tel
 | REQ-2 | `core/reading`, `core/snapshot` | TC-2.1, TC-2.2, TC-2.3 |
 | REQ-3 | `sources/*`, `core/snapshot` | TC-3.1, TC-3.2, TC-3.3 |
 | REQ-4 | `core/pipeline` | TC-4.1, TC-4.2 |
-| REQ-5 | `core/verdict` *(not yet written)* | TC-5.1, TC-5.2, TC-5.3 |
+| REQ-5 | `core/verdict`, `sinks/serial` | TC-5.1, TC-5.2, TC-5.3 |
 | REQ-6 | `core/log` *(not yet written)* | TC-6.1, TC-6.2, TC-6.3 |
 
 ## Test plan
@@ -56,14 +56,14 @@ REQ-3 and REQ-5 are the two that shape everything else. A system that cannot tel
 | TC-3.3 | Unit | A failure keeps the last good value and is reported as failing — distinguishable from a source never heard from and from one that is merely stale | **Automated** |
 | TC-4.1 | Unit | A full queue discards the oldest entry and increments the drop counter | Not run |
 | TC-4.2 | Integration | A producer posting faster than the consumer drains never blocks | Not run |
-| TC-5.1 | Unit | The verdict engine, across a table of snapshots covering every staleness and missing-input combination | Not started |
-| TC-5.2 | Integration | A stale input degrades the live verdict | Not started |
-| TC-5.3 | System | Network removed mid-run: the verdict hedges rather than remaining confident | Not started |
+| TC-5.1 | Unit | The verdict engine, across a table of snapshots covering every staleness and missing-input combination | **Automated** |
+| TC-5.2 | Integration | A stale input degrades the live verdict | Not run |
+| TC-5.3 | System | Network removed mid-run: the verdict hedges rather than remaining confident | Not run |
 | TC-6.1 | Unit | A log record survives a write/read round trip | Not started |
 | TC-6.2 | Integration | The log survives power loss mid-write | Not started |
 | TC-6.3 | System | Replaying a recorded log reproduces the original verdicts exactly | Not started |
 
-**Four of seventeen are automated.** Up from one of fifteen at v1.0. The number is here so it cannot quietly stay where it is; the eleven that remain are the ones that need a board or a verdict.
+**Five of seventeen are automated.** One of fifteen at v1.0, four at v2.0. The number is here so it cannot quietly stay where it is; of the twelve that remain, nine need a board and three need the log.
 
 ## Results
 
@@ -107,7 +107,31 @@ test_recovery_clears_the_failure_count                    PASSED
 test_failure_in_one_source_does_not_touch_the_other       PASSED
 ```
 
-These exist because the snapshot takes time as a parameter instead of reading a clock. A source can be made forty-five minutes old, or pushed across the 49-day `millis()` wrap, in one line — neither is something to wait for on a board. The one that matters most is **failure-after-good**: the last known value survives a failed fetch and the source is reported as *failing*, which is a different thing from *stale* (old) and from *never seen* (nothing yet). The verdict will need all three to be told apart.
+These exist because the snapshot takes time as a parameter instead of reading a clock. A source can be made forty-five minutes old, or pushed across the 49-day `millis()` wrap, in one line — neither is something to wait for on a board. The one that matters most is **failure-after-good**: the last known value survives a failed fetch and the source is reported as *failing*, which is a different thing from *stale* (old) and from *never seen* (nothing yet). The verdict needs all three told apart.
+
+### TC-5.1 result
+
+Fifteen cases in `test_native_verdict`, run on the host in 2 s:
+
+```
+test_mild_calm_clean_is_good_with_no_reasons          PASSED
+test_temperature_bands_and_boundaries                 PASSED
+test_cold_and_hot_name_themselves                     PASSED
+test_wind_bands_and_boundaries                        PASSED
+test_air_bands_and_boundaries                         PASSED
+test_worst_factor_wins                                PASSED
+test_humidity_does_not_move_the_verdict               PASSED
+test_empty_snapshot_is_unknown_with_no_confidence     PASSED
+test_failing_source_counts_at_low_confidence          PASSED
+test_stale_source_is_excluded                         PASSED
+test_missing_source_is_excluded                       PASSED
+test_everything_stale_is_unknown                      PASSED
+test_every_status_combination                         PASSED
+test_reason_count_never_exceeds_capacity              PASSED
+test_names_are_printable                              PASSED
+```
+
+`test_every_status_combination` is the one the test case is named for. It walks all sixteen combinations of source status — four for weather, four for air — with each source's value chosen to band Poor if used, so whether a source was admitted shows up in the outcome. It asserts the confidence rule, the admitted-or-excluded rule, and that every reason appears exactly when it should. `test_everything_stale_is_unknown` is TC-5.3's condition reproduced on the host: both sources aged past their thresholds, and the verdict says *Unknown* rather than repeating the last answer. What the host cannot check is that the live firmware behaves the same when the network is actually pulled — that stays with TC-5.3.
 
 ## Known gaps
 

@@ -42,7 +42,7 @@ Time arrives as a parameter. That is what puts this module in the host test tier
 | `Failing` | last attempt failed, but the last good value is still fresh |
 | `Stale` | last good value older than the threshold, regardless of recent attempts |
 
-Checked in that order. Stale outranks failing: old and erroring is old, and the verdict should see an absent input rather than a recent value with a hiccup.
+Checked in that order. Stale outranks failing: old and erroring is old, and the verdict treats it as absent rather than as a recent value with a hiccup. See [verdict](verdict.md) for what each status does to the answer.
 
 ## Staleness thresholds
 

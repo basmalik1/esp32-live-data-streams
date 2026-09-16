@@ -4,7 +4,7 @@ Every design choice made so far, with the reasoning and what was rejected. The c
 
 Each entry ends with a **revisit** note — the condition under which the decision should be reconsidered. A decision without one is a decision nobody will ever re-examine.
 
-Status as of v2.0: two sources on different cadences, one queue, a fusion task holding a snapshot, a sink that reads it. Thirty-one host tests passing. Nothing yet run on hardware.
+Status as of v3.0: two sources on different cadences, one queue, a fusion task holding a snapshot, a verdict computed from it, a sink that prints both. Forty-six host tests passing. Nothing yet run on hardware.
 
 ---
 
@@ -58,7 +58,7 @@ Status as of v2.0: two sources on different cadences, one queue, a fusion task h
 
 **Rejected.** Reusing an existing dashboard. Explicitly deferred at project start, on the grounds that the right presentation is not knowable before the verdict exists.
 
-**Revisit.** At v3.0, once there is a verdict to display.
+**Revisit.** At v4.0, once the log exists. A verdict alone is one line of text; the display worth building shows how the verdict and its inputs changed over time, and that needs the log first.
 
 ---
 
@@ -364,7 +364,7 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 **Rejected.** Mocking the Arduino API on the host to test everything there. The mock would need to model the scheduler to test scheduling, at which point it is a second implementation with its own bugs.
 
-**Revisit.** When a system tier becomes meaningful — at v3.0, once there is a verdict to assert against.
+**Revisit.** Now meaningful: TC-5.3 asserts that pulling the network sends the live verdict to *Unknown*. It needs the board.
 
 ### 7.3 Documentation stands alone
 
@@ -378,10 +378,55 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 ---
 
+## 8. The verdict
+
+### 8.1 Computed, not stored
+
+**Decision.** `verdictFrom(snapshot, nowMs)` is a pure function. There is no verdict task and no verdict state; every consumer that wants the answer computes it from its own snapshot copy.
+
+**Why.** The snapshot already is the state. Storing a verdict beside it would mean a second thing to keep consistent under the lock, and a second thing that could be stale. A pure function has nothing to be stale — and it is what lets the log at v4.0 replay a recorded snapshot and get the identical answer, which is TC-6.3.
+
+**Rejected.** *A verdict task that recomputes on every arrival and publishes the result* — more machinery, and the result is still a function of the snapshot, so it buys nothing except a second lock. *Computing inside the fusion task* — puts judgement in the path that should only fold readings, and makes the verdict's cost part of the queue drain.
+
+**Revisit.** If computing the verdict ever becomes expensive enough to matter on a print tick. It is a handful of comparisons; that day is not close.
+
+### 8.2 Worst band wins
+
+**Decision.** Each factor — temperature, wind, air quality — is banded Good / Fair / Poor. The verdict is the worst band across the factors that were admitted.
+
+**Why.** Someone asking "is it good out" wants to hear about the thing that would ruin it. Averaging or scoring would let a mild temperature offset a bad air day and report Fair when the honest answer is Poor.
+
+**Rejected.** *A weighted score* — needs weights, and there is no ground truth to fit them against. *Majority of factors* — three factors and one of them hazardous is not a good day.
+
+**Revisit.** If a factor is added that is genuinely minor — one that should be allowed to nudge but never decide. Then it needs a cap on how bad it can make the verdict, which is a different rule from this one.
+
+### 8.3 Failing counts; stale and missing do not
+
+**Decision.** A source that is *Failing* — last attempt failed, last good value still within its threshold — contributes its factors at reduced confidence. A source that is *Stale* or *NeverSeen* contributes nothing and reduces confidence. If nothing contributes, the outcome is *Unknown* with no confidence.
+
+**Why.** A fresh value from five minutes ago is still evidence, even if the fetch just now failed; discarding it would make one dropped request blank the verdict. A value past its threshold is not evidence — that is what the threshold means — and admitting it would let an hour-old AQI decide today. And when there is nothing, the only honest answer is that there is nothing. Repeating the last verdict would be the confident-answer-on-dead-input failure REQ-5 exists to prevent.
+
+**Rejected.** *Using stale values at low confidence* — makes "low confidence" carry two meanings, a recent hiccup and an old value, and the verdict's consumer cannot tell them apart. *Holding the previous verdict when inputs vanish* — see above.
+
+**Revisit.** If confidence needs more than three levels. Two sources give few distinguishable situations; a fourth or fifth source might warrant a count of degraded inputs rather than a flag.
+
+### 8.4 The thresholds, and what they rest on
+
+**Decision.** Temperature 10–27 °C Good, 0–10 and 27–32 Fair, beyond that Poor. Wind under 20 km/h Good, 20–35 Fair, above Poor. US AQI ≤ 50 Good, 51–100 Fair, above Poor. Boundaries inclusive on the Good side. Humidity is fetched and not used.
+
+**Why.** The AQI bands are the EPA's, and the reason to poll `us_aqi` rather than raw particulates was to inherit them. Wind follows the Beaufort scale: 3–4 goes unnoticed, 5 is noticeable, 6 and up is unpleasant. Temperature is the one with no authority behind it — comfortable, jacket-or-sweat, hazardous — and the ranges are stated so they can be argued with. Humidity is left out because a felt-temperature formula would need calibration this project cannot verify, and an unverifiable threshold is worse than none.
+
+**Rejected.** *Heat index / wind chill* — see humidity. *Configurable thresholds in `secrets.h`* — they are not secrets, and moving them out of the code moves them away from the comments that justify them.
+
+**Revisit.** After a season of running. If the verdict is regularly wrong about a particular band, the number moves; if it is wrong about the shape — a factor that should nudge rather than decide — that is 8.2.
+
+---
+
 ## Open questions
 
 Decisions not yet made, listed so they are made deliberately rather than by default.
 
 - **Queue depth at v4.0.** Sixteen is generous for polled sources and will be nothing against a push stream. Whether the stream shares the queue or gets its own is undecided.
 - **Stack sizes.** All estimates. Every task now reports its own high-water mark; the first extended hardware run should replace the estimates with measurements.
-- **What the verdict says.** The snapshot can now tell the verdict what it knows and how much to trust it. What "good out" means — which thresholds on temperature, wind and AQI, and how a failing or stale input degrades the answer — is v3.0's first decision.
+- **What the log records.** The verdict is a pure function of the snapshot, so recording snapshots is enough to replay verdicts. Whether to also record every reading — the stream, not just the state — decides the log's size and whether it can answer "what did the air source say at 14:32", and is v4.0's first decision.
+- **The dashboard.** Deferred again, to after the log (1.5). The honest version shows the verdict and its inputs over time, which a device with no history cannot draw.

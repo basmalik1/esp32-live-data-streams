@@ -1,6 +1,6 @@
 # sinks/serial
 
-Prints the fused snapshot every 10 seconds.
+Prints the verdict and the fused snapshot every 10 seconds.
 
 ```cpp
 #include "sinks/serial/serial_sink.h"
@@ -11,13 +11,16 @@ It reads the snapshot, not the queue. The queue has one consumer — the [fusion
 
 ## Output
 
-A header with the pipeline's health, then one line per source:
+A header with the pipeline's health, the verdict, then one line per source:
 
 ```
 [  50000] snapshot queued=0 dropped=0 stack_free=2840
+  verdict  GOOD      confidence low   air missing
   weather  ok        21.3 C  64% RH  11.2 km/h  age 39s
   air      never     (2 failed)
 ```
+
+The verdict line is `verdictFrom(snapshot, now)` computed on the spot — see [verdict](verdict.md). Reasons list what could not be trusted first, then what the conditions are.
 
 Status is one of `never`, `ok`, `FAILING`, `STALE` — see [snapshot](snapshot.md) for what each means. A source that has never succeeded shows its failure count instead of a value, because the value fields mean nothing yet.
 

@@ -1,16 +1,17 @@
 # Architecture
 
 ```
-sources ──▶ queue ──▶ fusion ──▶ snapshot ──▶ sinks
+sources ──▶ queue ──▶ fusion ──▶ snapshot ──▶ verdict ──▶ sinks
 ```
 
-Sources produce; one consumer drains; everything else reads the consumer's state. Sources and sinks share only the shape of a `Reading` and a `Snapshot`, and neither knows the other exists. Everything else follows from that.
+Sources produce; one consumer drains; everything else reads the consumer's state and computes the verdict from it. Sources and sinks share only the shape of a `Reading` and a `Snapshot`, and neither knows the other exists. Everything else follows from that.
 
 ```
 src/
   core/       reading.h         what flows through the pipeline
               pipeline.{h,cpp}  the queue, and its overflow policy
               snapshot.{h,cpp}  per-source last value, age, status - no Arduino
+              verdict.{h,cpp}   snapshot + time → one answer and its reasons - no Arduino
   net/        network_manager   joins WiFi, reports link state
               https_get         one GET over TLS, shared by every source
   sources/
@@ -20,7 +21,7 @@ src/
               air               same shape, every 15 min
   fusion/     fusion            the queue's one consumer; owns the snapshot
   sinks/
-    serial/   serial_sink       prints the snapshot every 10 s
+    serial/   serial_sink       prints the verdict and the snapshot every 10 s
   main.cpp                      wiring only
 ```
 
@@ -79,6 +80,29 @@ Stale outranks failing: a source that is both old and erroring is old, and shoul
 
 The snapshot module has no Arduino headers and no clock — time is a parameter — so all of this runs on the host, where a source can be made forty-five minutes old in one line.
 
+## The verdict is a view of the snapshot
+
+`verdictFrom(snapshot, nowMs)` is a pure function. There is no verdict task and no stored verdict, because there is nothing to store: the snapshot is the state, and the verdict is what it means right now. Any consumer with a snapshot copy computes it on demand — the serial sink on every tick, the log later from a recorded snapshot, which is what makes replay reproduce the original answers.
+
+Each factor is banded and the verdict is the **worst band**. Someone asking "is it good out" wants to know about the thing that would ruin it.
+
+| Factor | Good | Fair | Poor |
+| --- | --- | --- | --- |
+| Temperature | 10 – 27 °C | 0 – 10, 27 – 32 | below 0, above 32 |
+| Wind | under 20 km/h | 20 – 35 | above 35 |
+| US AQI | ≤ 50 | 51 – 100 | above 100 |
+
+Source status decides whether a factor is allowed to count:
+
+| Status | Its factors | Confidence |
+| --- | --- | --- |
+| `Ok` | count | — |
+| `Failing` | count — the last good value is still fresh | Low |
+| `Stale` | excluded | Low |
+| `NeverSeen` | excluded | Low |
+
+Confidence is `High` only when every source is `Ok`. When nothing is usable the outcome is `Unknown` — the verdict says it does not know rather than repeating the last answer, which is the failure REQ-5 exists to prevent.
+
 ## Readings carry their own age
 
 ```cpp
@@ -111,4 +135,4 @@ Three decisions in eight lines:
 
 ## What comes next, and what will not change
 
-The verdict engine attaches at the snapshot: a pure function of a `Snapshot` and a time, producing a judgement and its reasons. The log sink attaches the same way. Neither touches the queue, the `Reading` contract or the fusion task — which is the point of settling those now, while the only things that can break are a weather reading and an air-quality reading.
+The log sink attaches at the snapshot the same way the serial sink does: take a copy, record it, and on replay recompute the verdict from what was recorded. The push source at v4.0 attaches at the queue like any other source — and is the first thing that will make the queue's depth and overflow policy matter. Neither touches the `Reading` contract, the fusion task or the verdict function, which is the point of settling those now.
