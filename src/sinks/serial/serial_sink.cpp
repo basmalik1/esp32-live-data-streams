@@ -6,6 +6,7 @@
 
 #include "core/pipeline.h"
 #include "core/snapshot.h"
+#include "core/verdict.h"
 #include "fusion/fusion.h"
 
 namespace {
@@ -16,6 +17,17 @@ constexpr BaseType_t CORE = 1;
 constexpr uint32_t PERIOD_MS = 10000;
 
 TaskHandle_t handle = nullptr;
+
+// The answer first, then the evidence. Reasons are printed in the order the
+// verdict lists them: what could not be trusted, then what the conditions are.
+void printVerdict(const Verdict &v) {
+  Serial.printf("  verdict  %-8s  confidence %s", outcomeName(v.outcome),
+                confidenceName(v.confidence));
+  for (uint8_t i = 0; i < v.reasonCount; i++) {
+    Serial.printf("%s%s", i == 0 ? "   " : ", ", reasonName(v.reasons[i]));
+  }
+  Serial.println();
+}
 
 void printSource(const Snapshot &snap, SourceId id, uint32_t nowMs) {
   const SourceState &st = snap.source[(size_t)id];
@@ -61,6 +73,7 @@ void task(void *) {
     Serial.printf("[%7lu] snapshot queued=%lu dropped=%lu stack_free=%u\n", now,
                   pipelineQueued(), pipelineDropped(),
                   uxTaskGetStackHighWaterMark(nullptr));
+    printVerdict(verdictFrom(snap, now));
     for (size_t i = 0; i < (size_t)SourceId::Count; i++) {
       printSource(snap, (SourceId)i, now);
     }
