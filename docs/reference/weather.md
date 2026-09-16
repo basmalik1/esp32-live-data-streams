@@ -34,4 +34,4 @@ It validates every field before using any of them. Open-Meteo omits keys it has 
 
 ## Known gap
 
-The HTTPS client calls `setInsecure()`: the connection is encrypted but the server is not authenticated. Pinning a root CA means shipping a certificate that expires. Low exposure for public read-only data, but a real weakness.
+The request goes through `net/https_get`, which calls `setInsecure()`: the connection is encrypted but the server is not authenticated. Pinning a root CA means shipping a certificate that expires. Low exposure for public read-only data, but a real weakness — and kept in one place so it can be fixed in one edit.

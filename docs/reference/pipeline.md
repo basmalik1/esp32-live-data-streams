@@ -1,13 +1,13 @@
 # core/pipeline
 
-The single queue every source posts to and the consumer drains. The only thing the two ends share.
+The single queue every source posts to and the fusion task drains. The only thing the two ends share.
 
 ```cpp
 #include "core/pipeline.h"
 
 bool     pipelineInit(uint32_t depth);
 bool     pipelinePost(const Reading &r);              // from source tasks
-bool     pipelineTake(Reading &out, uint32_t timeoutMs);  // from the consumer
+bool     pipelineTake(Reading &out, uint32_t timeoutMs);  // from fusion, and only fusion
 uint32_t pipelineDropped();
 uint32_t pipelineQueued();
 ```
@@ -26,7 +26,7 @@ The mutex is taken only when the queue is full. Making room is a receive followe
 
 ## Depth
 
-Set at `pipelineInit()`. At v1.0 the depth is 16 against one source polling every 10 minutes, which is more than an hour of history — deliberately generous, because the interesting behaviour only appears when a push source starts producing faster than anything drains it.
+Set at `pipelineInit()`. At v2.0 the depth is 16 against two sources polling every 10 and 15 minutes, which is well over half an hour of history — deliberately generous, because the interesting behaviour only appears when a push source starts producing faster than anything drains it.
 
 ## Instrumentation
 

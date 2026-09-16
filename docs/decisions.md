@@ -4,7 +4,7 @@ Every design choice made so far, with the reasoning and what was rejected. The c
 
 Each entry ends with a **revisit** note — the condition under which the decision should be reconsidered. A decision without one is a decision nobody will ever re-examine.
 
-Status as of v1.0: one source, one queue, one consumer. Eight host tests passing. Nothing yet run on hardware.
+Status as of v2.0: two sources on different cadences, one queue, a fusion task holding a snapshot, a sink that reads it. Thirty-one host tests passing. Nothing yet run on hardware.
 
 ---
 
@@ -114,6 +114,16 @@ Status as of v1.0: one source, one queue, one consumer. Eight host tests passing
 
 **Revisit.** Never. Instrumentation is cheap and its absence is expensive.
 
+### 2.6 One consumer; everything else reads the snapshot
+
+**Decision.** The fusion task is the only caller of `pipelineTake()`. Sinks, and later the verdict and the log, call `fusionSnapshot()` and receive a copy of its state.
+
+**Why.** A FreeRTOS queue delivers each element to exactly one receiver, so a second task draining it would steal readings from the first. Fan-out has to happen after the queue, and the cheapest place is a struct copy under a mutex: about a hundred bytes, held for one assignment. A copy also means the verdict can be a pure function of a `Snapshot` and a time, which is what makes it host-testable.
+
+**Rejected.** *A second queue per consumer, fed by fusion* — more memory, more policy decisions, and every consumer still ends up rebuilding the same snapshot from the stream. *Handing out a pointer to the live snapshot* — cheaper than a copy, and a reader would then hold the lock for however long it takes to print, blocking fusion behind the serial port.
+
+**Revisit.** If a consumer needs the sequence of readings rather than the current state — the log sink at v4.0 may. Then it gets a tap on the fusion task, not a second queue consumer.
+
 ---
 
 ## 3. The reading
@@ -168,6 +178,28 @@ Status as of v1.0: one source, one queue, one consumer. Eight host tests passing
 
 **Revisit.** Never.
 
+### 3.6 The snapshot keeps last-good and last-attempt separately
+
+**Decision.** Per source, the snapshot holds the most recent *valid* reading and, separately, when the last attempt was and whether it succeeded. A failure never overwrites the last good value.
+
+**Why.** A verdict wants two different things from a source: what it last said, and whether it can still be believed. Collapsing those into one field loses one of them. Keeping them apart gives four distinguishable states — never seen, ok, failing with a usable last value, stale — and the verdict needs all four: "the service is down but we knew the temperature five minutes ago" is a different situation from "we have not heard anything for an hour".
+
+**Rejected.** *Overwriting on failure* — turns a single dropped request into a blank, which is precisely the information loss REQ-3 forbids. *Keeping a history* — more than the verdict needs, and the log is the right place for history when it arrives.
+
+**Revisit.** If a source's failures need to be reasoned about in more detail than a count — a source that fails in a particular pattern, say. Then the attempt record grows.
+
+### 3.7 Stale means three missed polls, per source
+
+**Decision.** A source's last good value is stale once it is older than three poll periods: thirty minutes for weather, forty-five for air. A stale source outranks a failing one.
+
+**Why.** One missed poll is a transient on a home network and should not change anything. Three in a row means the source is gone and its last value has stopped describing the present. Tying the threshold to the poll period, rather than to a guess about how fast the world changes, gives it a rationale that survives a cadence change. The thresholds live in `snapshot.cpp` beside the rule that reads them, so the numbers and the reasoning are in one place.
+
+Stale outranks failing because a source that is both old and erroring is old. The verdict should treat it as absent, not as a recent value with a hiccup.
+
+**Rejected.** *A single global threshold* — a forecast and an hourly air-quality index do not age at the same rate, and one number would be wrong for at least one of them. *Thresholds derived from how fast the quantity changes* — the initial intuition was that air quality goes stale faster than weather. The service itself only updates hourly, so that intuition was backwards, and a rule based on the poll period does not depend on getting it right.
+
+**Revisit.** After the first extended run. If a source misses three polls routinely on a healthy network, the retry cadence is wrong, not the threshold.
+
 ---
 
 ## 4. Scheduling
@@ -210,7 +242,7 @@ Status as of v1.0: one source, one queue, one consumer. Eight host tests passing
 
 **Rejected.** Generous stacks everywhere. RAM is 320 KB, TLS alone wants a large chunk, and "generous" for a task that does HTTPS is a number nobody can guess.
 
-**Revisit.** After the first extended run on hardware. The 8 KB for the weather task is a guess with headroom; the source task should report its own mark so the guess becomes a measurement.
+**Revisit.** After the first extended run on hardware. Every task now prints its own mark — the sources after each fetch, when it is lowest — so the 8 KB guesses become measurements the moment the firmware runs.
 
 ### 4.5 `loop()` suspends itself
 
@@ -276,6 +308,26 @@ Status as of v1.0: one source, one queue, one consumer. Eight host tests passing
 
 **Revisit.** Never.
 
+### 5.6 Air quality every fifteen minutes
+
+**Decision.** The second source polls Open-Meteo's air-quality endpoint on a fifteen-minute period, against weather's ten.
+
+**Why.** The service updates hourly, so anything faster than that is wasted requests; fifteen minutes catches each update within a quarter of an hour without hammering. The more important reason is that it is *different* from ten. Two sources on the same period arrive in lockstep and never produce the case fusion exists for — one input fresh, the other not.
+
+**Rejected.** Matching weather's ten minutes. Simpler to reason about and it hides the interesting behaviour.
+
+**Revisit.** Never for the principle. The number can move if the service's update interval changes.
+
+### 5.7 One HTTPS helper for every source
+
+**Decision.** `httpsGet()` in `net/` does the TLS client setup, the request and the status check. Sources build a URL and parse a body; nothing else.
+
+**Why.** The second source would have copied thirty lines of client setup from the first, and with it the `setInsecure()` call. A known gap should exist in exactly one place, so that fixing it is one edit and forgetting one copy is impossible.
+
+**Rejected.** Per-source clients. Two copies today, three at v4.0, and each is a place the TLS decision could silently diverge.
+
+**Revisit.** If a source needs a different transport — a WebSocket for the push stream, say. That is a second helper, not a reason to inline this one.
+
 ---
 
 ## 6. Observability
@@ -331,7 +383,5 @@ Status as of v1.0: one source, one queue, one consumer. Eight host tests passing
 Decisions not yet made, listed so they are made deliberately rather than by default.
 
 - **Queue depth at v4.0.** Sixteen is generous for polled sources and will be nothing against a push stream. Whether the stream shares the queue or gets its own is undecided.
-- **How the fusion stage holds state.** A snapshot under a mutex is the obvious answer. Whether the verdict engine reads it directly or receives a copy is open, and affects whether the verdict can be a pure function.
-- **Stack sizes.** All estimates. The first extended hardware run should replace them with measurements.
-- **Branch naming.** The repository's default branch is `master`; the conventional default is `main`. Cheap to change now, annoying later.
-- **What "stale" means per source.** The verdict engine needs a staleness threshold per input. A forecast is fine for an hour; air quality is not. These need numbers, and the numbers need a rationale.
+- **Stack sizes.** All estimates. Every task now reports its own high-water mark; the first extended hardware run should replace the estimates with measurements.
+- **What the verdict says.** The snapshot can now tell the verdict what it knows and how much to trust it. What "good out" means — which thresholds on temperature, wind and AQI, and how a failing or stale input degrades the answer — is v3.0's first decision.

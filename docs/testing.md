@@ -5,7 +5,7 @@ Two tiers, split by what each can actually prove.
 ```
    /\      on-target   scheduler, queue under load, real peripherals
   /  \
- /____\    host        pure logic — parsers, and later the verdict engine
+ /____\    host        pure logic — parsers, the snapshot, and later the verdict
 ```
 
 A third tier — system tests against a running board — arrives with the verdict engine, since there is not yet a system-level behaviour worth asserting.
@@ -20,11 +20,13 @@ pio test -e native
 
 | Test | Covers |
 | --- | --- |
-| `test_native_weather_parse` | TC-1.1 — the response parser, 8 cases |
+| `test_native_weather_parse` | TC-1.1 — the forecast parser, 8 cases |
+| `test_native_air_parse` | TC-1.1 — the air-quality parser, 9 cases |
+| `test_native_snapshot` | TC-2.1, TC-2.3, TC-3.3 — age arithmetic and the staleness rules, 14 cases |
 
-This tier is why the parser is a free function in its own translation unit with no Arduino headers. The `native` environment compiles only `sources/*/*_parse.cpp`, so anything that includes `Arduino.h` is excluded by construction and the tier stays buildable on a machine with no embedded toolchain at all.
+This tier is why the parsers and the snapshot are free functions in their own translation units with no Arduino headers. The `native` environment compiles only `sources/*/*_parse.cpp` and `core/snapshot.cpp`, so anything that includes `Arduino.h` is excluded by construction and the tier stays buildable on a machine with no embedded toolchain at all.
 
-The payoff is being able to test the responses you cannot conveniently produce: a body truncated by a dropped connection, a field the service omitted, a number arriving as a string. Reproducing those against a live API means waiting for a bad day.
+The payoff is being able to test what you cannot conveniently produce. For the parsers: a body truncated by a dropped connection, a field the service omitted, a number arriving as a string. For the snapshot: a source that is forty-five minutes old, a timestamp on the far side of the 49-day `millis()` wrap, a failure landing on top of a good value. Reproducing any of those against a live board means waiting for a bad day, or a long one.
 
 ## On-target — `pio test -e target`
 
@@ -46,12 +48,28 @@ Budget roughly 25 seconds per test file: each is a full build, flash and run cyc
 
 ## Reading the running system
 
-The consumer prints a heartbeat every 5 seconds when the queue is empty:
+Three kinds of line. The fusion task prints one per arrival, which is the observable for "a reading made it through the queue":
+
+```
+[  10231] weather  21.3 C  64% RH  11.2 km/h
+[  10502] air      pm2.5 3.4  pm10 6.3  aqi 26
+[  40511] air      FAILED
+```
+
+The sink prints the snapshot every 10 seconds — per source, its status, last good value and age:
+
+```
+[  50000] snapshot queued=0 dropped=0 stack_free=2840
+  weather  ok        21.3 C  64% RH  11.2 km/h  age 39s
+  air      FAILING   pm2.5 3.4  pm10 6.3  aqi 26  age 39s  (1 failed since)
+```
+
+And when nothing has arrived for 5 seconds, fusion prints a heartbeat:
 
 ```
 [  12034] idle     queued=0 dropped=0 stack_free=2196
 ```
 
-`dropped` climbing means the consumer cannot keep up. `stack_free` is words remaining, not bytes — a number trending toward zero is the warning you get before a stack overflow, which otherwise presents as an unexplained reset.
+`dropped` climbing means the consumer cannot keep up. `stack_free` is words remaining, not bytes — a number trending toward zero is the warning you get before a stack overflow, which otherwise presents as an unexplained reset. Each source task prints its own `stack_free` after every fetch, which is the moment it is lowest.
 
 Silence is the one output that means something is wrong. The heartbeat exists so that "nothing is happening" and "the firmware died" do not look identical.

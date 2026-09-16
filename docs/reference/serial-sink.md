@@ -1,33 +1,28 @@
 # sinks/serial
 
-The consumer. Drains the pipeline and prints what arrives.
+Prints the fused snapshot every 10 seconds.
 
 ```cpp
 #include "sinks/serial/serial_sink.h"
 bool serialSinkStart();
 ```
 
-Milestone 1's sink, and deliberately dumb. It exists to prove the pipeline end to end before a fusion stage or a display is worth writing.
+It reads the snapshot, not the queue. The queue has one consumer — the [fusion task](fusion.md) — and every output surface takes a copy of what fusion knows. This is the same shape the verdict engine and the log will use, so the sink is the first proof that the fan-out works.
 
 ## Output
 
-A line per reading, with the age at the moment it was printed:
+A header with the pipeline's health, then one line per source:
 
 ```
-[  10231] weather  21.3 C  64% RH  11.2 km/h   (age 4 ms)
-[  10500] weather  FAILED
+[  50000] snapshot queued=0 dropped=0 stack_free=2840
+  weather  ok        21.3 C  64% RH  11.2 km/h  age 39s
+  air      never     (2 failed)
 ```
 
-And a heartbeat every 5 seconds when nothing arrives:
+Status is one of `never`, `ok`, `FAILING`, `STALE` — see [snapshot](snapshot.md) for what each means. A source that has never succeeded shows its failure count instead of a value, because the value fields mean nothing yet.
 
-```
-[  12034] idle     queued=0 dropped=0 stack_free=2196
-```
-
-The heartbeat is not decoration. Silence is the one output that carries no information — "nothing is happening" and "the firmware died" look identical — so the idle path prints queue depth, cumulative drops and remaining stack instead.
-
-`stack_free` is in words, not bytes. A value trending toward zero is the only warning you get before a stack overflow, which otherwise presents as an unexplained reset with nothing on the wire.
+`dropped` climbing means fusion cannot keep up. `stack_free` is in words, not bytes; a value trending toward zero is the only warning you get before a stack overflow, which otherwise presents as an unexplained reset with nothing on the wire.
 
 ## Priority
 
-Runs below the source tasks. Producing readings is more time-sensitive than printing them, and a consumer that outranked its producers would be the wrong way round.
+Lowest of the application tasks. Printing is the one job here that can always wait.
