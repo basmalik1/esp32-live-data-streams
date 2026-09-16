@@ -6,3 +6,6 @@
 # WiFi credentials. The .example file is committed as a template;
 # the real secrets.h never is.
 include/secrets.h
+
+# Working context for Claude Code sessions. Local only.
+CLAUDE.md
