@@ -7,3 +7,8 @@
 // different schedules, failing independently, is what the fusion stage has to
 // cope with.
 bool airSourceStart();
+
+// Cuts the current wait short so the next fetch happens now. The cadence
+// restarts from the forced poll. This is what a "network just came back"
+// handler calls, and what a test calls instead of waiting ten minutes.
+void airSourcePollNow();

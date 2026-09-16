@@ -59,6 +59,17 @@ void task(void *) {
     // though the fetch itself takes a variable amount of time. With plain
     // delay the period would be poll + fetch, and would drift with the network.
     vTaskDelayUntil(&wake, pdMS_TO_TICKS(r.valid ? POLL_MS : RETRY_MS));
+
+    // Back before the wake time we were given means PollNow() cut the wait
+    // short. Restart the cadence from this forced poll. Leaving `wake` in the
+    // future is not harmless: the next vTaskDelayUntil would see a wake time
+    // ahead of the clock, decide no delay is needed, and fetch a second time
+    // immediately. (xTaskDelayUntil's return value does not report an abort -
+    // it reports whether any delay happened - so the clock comparison is the
+    // only reliable signal.)
+    if ((int32_t)(xTaskGetTickCount() - wake) < 0) {
+      wake = xTaskGetTickCount();
+    }
   }
 }
 
@@ -67,4 +78,10 @@ void task(void *) {
 bool weatherSourceStart() {
   return xTaskCreatePinnedToCore(task, "weather", STACK_BYTES, nullptr,
                                  PRIORITY, &handle, CORE) == pdPASS;
+}
+
+void weatherSourcePollNow() {
+  if (handle != nullptr) {
+    xTaskAbortDelay(handle);
+  }
 }

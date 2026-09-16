@@ -51,6 +51,12 @@ void task(void *) {
     Serial.printf("air: stack_free=%u\n", uxTaskGetStackHighWaterMark(nullptr));
 
     vTaskDelayUntil(&wake, pdMS_TO_TICKS(r.valid ? POLL_MS : RETRY_MS));
+
+    // Woke early: PollNow() cut the wait short. Restart the cadence from here,
+    // for the reason spelled out in the weather task.
+    if ((int32_t)(xTaskGetTickCount() - wake) < 0) {
+      wake = xTaskGetTickCount();
+    }
   }
 }
 
@@ -59,4 +65,10 @@ void task(void *) {
 bool airSourceStart() {
   return xTaskCreatePinnedToCore(task, "air", STACK_BYTES, nullptr, PRIORITY,
                                  &handle, CORE) == pdPASS;
+}
+
+void airSourcePollNow() {
+  if (handle != nullptr) {
+    xTaskAbortDelay(handle);
+  }
 }
