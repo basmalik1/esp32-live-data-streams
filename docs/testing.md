@@ -37,15 +37,21 @@ Builds a test firmware, flashes it, and reads Unity's results back over serial. 
 pio test -e target
 ```
 
-No tests yet. The ones this tier is for are the ones a host cannot answer honestly:
+| Test | Covers |
+| --- | --- |
+| `test_embedded_pipeline` | TC-4.1, TC-4.2 — overflow drops the oldest; two producers flooding a saturated queue never wait more than microseconds |
+| `test_embedded_sources` | TC-3.1, TC-3.2 — a fetch with no network posts `valid = false`; a 404 is a failure, not silence |
+| `test_embedded_verdict` | TC-5.2, TC-5.3 — a stale reading through the live pipeline is excluded; pulling the network mid-run drops the live verdict to low confidence |
 
-- **Queue overflow under a real flood** — a producer task genuinely outrunning a consumer task, not a simulated one.
-- **Producers never blocking**, measured as cadence holding while the queue is saturated.
-- **Stack headroom** via `uxTaskGetStackHighWaterMark`, so stack sizes become measurements rather than estimates.
+These are the questions a host cannot answer honestly: they are about the real scheduler, the real queue, real TLS and a real network going away. The last one earned its place immediately — it caught a double-fetch after a forced poll that no host test could have seen, because the cause was `vTaskDelayUntil`'s treatment of a wake time in the future.
 
-Budget roughly 25 seconds per test file: each is a full build, flash and run cycle.
+Budget roughly 30 seconds per test file: each is a full build, flash and run cycle, and two of the three join WiFi. The test task waits 3 s at boot so the runner has time to reopen the port after the upload reset; without that the first case's result line can be printed before anyone is listening.
 
 `main.cpp` is excluded from these builds, because its `setup()`/`loop()` would collide with the test runner's.
+
+## Soak — `read_serial` for half an hour
+
+TC-1.3 is not a Unity test. It is the main firmware left running while a script reads the UART port for at least three weather periods, and then the arrival timestamps checked against 600 s and 900 s. The first attempt was cut short before any source polled twice; the process document says so.
 
 ## Reading the running system
 
@@ -72,6 +78,6 @@ And when nothing has arrived for 5 seconds, fusion prints a heartbeat:
 [  12034] idle     queued=0 dropped=0 stack_free=2196
 ```
 
-`dropped` climbing means the consumer cannot keep up. `stack_free` is words remaining, not bytes — a number trending toward zero is the warning you get before a stack overflow, which otherwise presents as an unexplained reset. Each source task prints its own `stack_free` after every fetch, which is the moment it is lowest.
+`dropped` climbing means the consumer cannot keep up. `stack_free` is **bytes** remaining — ESP-IDF's FreeRTOS port reports the high-water mark in bytes, unlike vanilla FreeRTOS, which reports words. (An earlier version of this page said words. It was written before the firmware had run, and the first run was what prompted checking the header.) A number trending toward zero is the warning you get before a stack overflow, which otherwise presents as an unexplained reset. Each source task prints its own `stack_free` after every fetch, which is the moment it is lowest.
 
 Silence is the one output that means something is wrong. The heartbeat exists so that "nothing is happening" and "the firmware died" do not look identical.

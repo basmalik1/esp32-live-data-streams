@@ -5,6 +5,7 @@ Polls the Open-Meteo forecast API and posts a `Reading` for every attempt.
 ```cpp
 #include "sources/weather/weather.h"
 bool weatherSourceStart();
+void weatherSourcePollNow();   // fetch now; the cadence restarts from here
 
 #include "sources/weather/weather_parse.h"
 bool weatherParse(const char *json, size_t len, WeatherSample &out);
@@ -19,6 +20,8 @@ Open-Meteo needs no API key for non-commercial use.
 ## Cadence
 
 Ten minutes on success, thirty seconds after a failure, using `vTaskDelayUntil` so the period does not drift by however long the request took. A forecast does not change faster than that, and a failing source should recover quickly without hammering the service.
+
+`PollNow()` aborts the task's current wait. After any wait the task compares the clock to the wake time it was given; waking early means the wait was cut short, and the cadence restarts from the forced poll. That comparison is not optional — leaving the wake time in the future makes `vTaskDelayUntil` skip the next wait entirely, and the on-target test for TC-5.3 caught exactly that.
 
 ## Failure behaviour
 

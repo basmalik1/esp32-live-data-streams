@@ -5,6 +5,7 @@ Polls the Open-Meteo air-quality API and posts a `Reading` for every attempt.
 ```cpp
 #include "sources/air/air.h"
 bool airSourceStart();
+void airSourcePollNow();   // as for weather
 
 #include "sources/air/air_parse.h"
 bool airParse(const char *json, size_t len, AirSample &out);

@@ -4,7 +4,7 @@ Every design choice made so far, with the reasoning and what was rejected. The c
 
 Each entry ends with a **revisit** note — the condition under which the decision should be reconsidered. A decision without one is a decision nobody will ever re-examine.
 
-Status as of v3.0: two sources on different cadences, one queue, a fusion task holding a snapshot, a verdict computed from it, a sink that prints both. Forty-six host tests passing. Nothing yet run on hardware.
+Status as of v3.0 + hardware pass: two sources on different cadences, one queue, a fusion task holding a snapshot, a verdict computed from it, a sink that prints both. Forty-six host tests and six on-target tests passing. The firmware has run live; the extended soak has not yet run to completion.
 
 ---
 
@@ -242,7 +242,7 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 **Rejected.** Generous stacks everywhere. RAM is 320 KB, TLS alone wants a large chunk, and "generous" for a task that does HTTPS is a number nobody can guess.
 
-**Revisit.** After the first extended run on hardware. Every task now prints its own mark — the sources after each fetch, when it is lowest — so the 8 KB guesses become measurements the moment the firmware runs.
+**Revisit.** Now measured, on two short runs — see the table in the process document. Each task keeps roughly half its stack at the low point. Two handshakes per source is thin evidence; the sizes stay until several days of marks agree. Note for anyone reading the numbers: ESP-IDF reports the high-water mark in bytes, not the words of vanilla FreeRTOS. The documentation said words until the first run prompted a check of the header.
 
 ### 4.5 `loop()` suspends itself
 
@@ -328,6 +328,18 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 **Revisit.** If a source needs a different transport — a WebSocket for the push stream, say. That is a second helper, not a reason to inline this one.
 
+### 5.8 A source can be told to poll now
+
+**Decision.** `weatherSourcePollNow()` and `airSourcePollNow()` abort the task's current wait with `xTaskAbortDelay`. After every wait the task compares the clock to its scheduled wake time; waking early means the wait was cut short, and the cadence restarts from the forced poll.
+
+**Why.** The system test for REQ-5 — pull the network, watch the verdict hedge — cannot wait ten minutes for the next scheduled fetch. And the same hook is what a "network is back" handler wants: the retry cadence is thirty seconds, but a reconnect is a reason to fetch immediately. Aborting the existing wait keeps one wait mechanism (decision 4.1) rather than adding a second.
+
+The clock comparison is the part that was not obvious. `xTaskDelayUntil` reports whether *any* delay happened, not whether it was aborted, so its return value cannot detect the abort. And an aborted `vTaskDelayUntil` leaves the wake time in the future, which the next call treats as "already due" and returns from immediately — so without the reset every forced poll fetched twice. The on-target test caught it on its first run.
+
+**Rejected.** *A task notification with a timed wait* replacing `vTaskDelayUntil` — works, but it is a second scheduling mechanism and it loses the drift-free period that 4.1 chose. *A `pollRequested` flag checked on wake* — a second piece of state where a clock comparison already answers the question.
+
+**Revisit.** If a source is ever driven by something other than a period — a push source at v4.0 will not have a wait to abort.
+
 ---
 
 ## 6. Observability
@@ -364,7 +376,7 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 
 **Rejected.** Mocking the Arduino API on the host to test everything there. The mock would need to model the scheduler to test scheduling, at which point it is a second implementation with its own bugs.
 
-**Revisit.** Now meaningful: TC-5.3 asserts that pulling the network sends the live verdict to *Unknown*. It needs the board.
+**Revisit.** Done: `test_embedded_verdict` pulls the network mid-run and asserts the live verdict drops to low confidence. The on-target tier paid for itself on its first run by catching the double-fetch in 5.8.
 
 ### 7.3 Documentation stands alone
 
@@ -427,6 +439,6 @@ Stale outranks failing because a source that is both old and erroring is old. Th
 Decisions not yet made, listed so they are made deliberately rather than by default.
 
 - **Queue depth at v4.0.** Sixteen is generous for polled sources and will be nothing against a push stream. Whether the stream shares the queue or gets its own is undecided.
-- **Stack sizes.** All estimates. Every task now reports its own high-water mark; the first extended hardware run should replace the estimates with measurements.
+- **Stack sizes.** Measured on two short runs (see the process document). Whether that is a safe basis for shrinking anything is open; the answer is more and longer runs.
 - **What the log records.** The verdict is a pure function of the snapshot, so recording snapshots is enough to replay verdicts. Whether to also record every reading — the stream, not just the state — decides the log's size and whether it can answer "what did the air source say at 14:32", and is v4.0's first decision.
 - **The dashboard.** Deferred again, to after the log (1.5). The honest version shows the verdict and its inputs over time, which a device with no history cannot draw.

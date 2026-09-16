@@ -24,7 +24,7 @@ The verdict line is `verdictFrom(snapshot, now)` computed on the spot — see [v
 
 Status is one of `never`, `ok`, `FAILING`, `STALE` — see [snapshot](snapshot.md) for what each means. A source that has never succeeded shows its failure count instead of a value, because the value fields mean nothing yet.
 
-`dropped` climbing means fusion cannot keep up. `stack_free` is in words, not bytes; a value trending toward zero is the only warning you get before a stack overflow, which otherwise presents as an unexplained reset with nothing on the wire.
+`dropped` climbing means fusion cannot keep up. `stack_free` is in bytes (ESP-IDF's port, unlike vanilla FreeRTOS); a value trending toward zero is the only warning you get before a stack overflow, which otherwise presents as an unexplained reset with nothing on the wire.
 
 ## Priority
 
